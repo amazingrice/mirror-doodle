@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mirror Doodle</title>
+<style>
+  :root {
+    --bg: #0f1020;
+    --panel: rgba(255,255,255,0.06);
+    --panel-border: rgba(255,255,255,0.12);
+    --text: #e8e8f0;
+    --muted: #9a9ab0;
+    --accent: #7c5cff;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    overflow: hidden;
+  }
+  #stage {
+    position: fixed;
+    inset: 0;
+    display: block;
+    cursor: crosshair;
+    touch-action: none;
+  }
+  .panel {
+    position: fixed;
+    top: 16px;
+    left: 16px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px 18px;
+    align-items: center;
+    padding: 12px 16px;
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: 14px;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    max-width: calc(100vw - 32px);
+    user-select: none;
+    z-index: 10;
+  }
+  .title {
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    margin-right: 4px;
+  }
+  .title span { color: var(--accent); }
+  label.control {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 11px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+  }
+  label.control .val { color: var(--text); font-variant-numeric: tabular-nums; }
+  input[type="range"] { width: 120px; accent-color: var(--accent); }
+  input[type="checkbox"] { accent-color: var(--accent); width: 16px; height: 16px; }
+  .row { display: flex; align-items: center; gap: 8px; }
+  button {
+    font: inherit;
+    font-size: 13px;
+    color: var(--text);
+    background: rgba(255,255,255,0.08);
+    border: 1px solid var(--panel-border);
+    border-radius: 9px;
+    padding: 7px 12px;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  button:hover { background: rgba(255,255,255,0.16); }
+  button.primary { background: var(--accent); border-color: transparent; }
+  button.primary:hover { background: #9179ff; }
+  .hint {
+    position: fixed;
+    bottom: 14px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 12px;
+    color: var(--muted);
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    padding: 6px 14px;
+    border-radius: 999px;
+    backdrop-filter: blur(12px);
+    z-index: 10;
+  }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+
+<div class="panel">
+  <div class="title">Mirror <span>Doodle</span></div>
+
+  <label class="control">Symmetry <span class="val" id="symVal">8</span>
+    <input type="range" id="sym" min="2" max="24" step="1" value="8">
+  </label>
+
+  <label class="control">Brush <span class="val" id="sizeVal">4</span>
+    <input type="range" id="size" min="1" max="40" step="1" value="4">
+  </label>
+
+  <label class="control">Hue speed <span class="val" id="hueVal">2</span>
+    <input type="range" id="hue" min="0" max="12" step="1" value="2">
+  </label>
+
+  <label class="control">Fade <span class="val" id="fadeVal">0</span>
+    <input type="range" id="fade" min="0" max="20" step="1" value="0">
+  </label>
+
+  <div class="row">
+    <label class="control" style="flex-direction:row;align-items:center;gap:6px;">
+      <input type="checkbox" id="reflect" checked> Reflect
+    </label>
+  </div>
+
+  <div class="row">
+    <button id="clear">Clear</button>
+    <button id="save" class="primary">Save PNG</button>
+  </div>
+</div>
+
+<div class="hint">Drag to draw &middot; strokes mirror around the center</div>
+
+<script>
+(function () {
+  const canvas = document.getElementById('stage');
+  const ctx = canvas.getContext('2d', { alpha: false });
+
+  const el = id => document.getElementById(id);
+  const symInput = el('sym'), sizeInput = el('size'),
+        hueInput = el('hue'), fadeInput = el('fade'),
+        reflectInput = el('reflect');
+
+  let dpr = 1, cx = 0, cy = 0;
+  let hueBase = Math.random() * 360;
+
+  function resize() {
+    dpr = window.devicePixelRatio || 1;
+    // Preserve current drawing across resize
+    const prev = document.createElement('canvas');
+    prev.width = canvas.width; prev.height = canvas.height;
+    if (canvas.width) prev.getContext('2d').drawImage(canvas, 0, 0);
+
+    canvas.width = Math.floor(window.innerWidth * dpr);
+    canvas.height = Math.floor(window.innerHeight * dpr);
+    canvas.style.width = window.innerWidth + 'px';
+    canvas.style.height = window.innerHeight + 'px';
+
+    ctx.fillStyle = '#0f1020';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    if (prev.width) ctx.drawImage(prev, 0, 0);
+
+    cx = canvas.width / 2;
+    cy = canvas.height / 2;
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  // Bind slider value labels
+  [['sym','symVal'],['size','sizeVal'],['hue','hueVal'],['fade','fadeVal']]
+    .forEach(([inp, out]) => {
+      const i = el(inp), o = el(out);
+      const upd = () => o.textContent = i.value;
+      i.addEventListener('input', upd); upd();
+    });
+
+  let drawing = false;
+  let last = null; // {x, y} in canvas pixel space
+
+  function pos(e) {
+    const t = e.touches ? e.touches[0] : e;
+    return { x: t.clientX * dpr, y: t.clientY * dpr };
+  }
+
+  function stamp(from, to) {
+    const segs = parseInt(symInput.value, 10);
+    const reflect = reflectInput.checked;
+    const size = parseFloat(sizeInput.value) * dpr;
+    hueBase = (hueBase + parseFloat(hueInput.value) * 0.5) % 360;
+
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = size;
+    ctx.strokeStyle = `hsl(${hueBase}, 85%, 62%)`;
+    ctx.shadowColor = `hsl(${hueBase}, 90%, 65%)`;
+    ctx.shadowBlur = size * 1.2;
+
+    const ax = from.x - cx, ay = from.y - cy;
+    const bx = to.x - cx,   by = to.y - cy;
+
+    for (let i = 0; i < segs; i++) {
+      const ang = (Math.PI * 2 / segs) * i;
+      const cos = Math.cos(ang), sin = Math.sin(ang);
+
+      drawRot(ax, ay, bx, by, cos, sin, false);
+      if (reflect) drawRot(ax, ay, bx, by, cos, sin, true);
+    }
+    ctx.shadowBlur = 0;
+  }
+
+  function drawRot(ax, ay, bx, by, cos, sin, flip) {
+    const s = flip ? -1 : 1;
+    const a1x = cx + (ax * cos - (s * ay) * sin);
+    const a1y = cy + (ax * sin + (s * ay) * cos);
+    const b1x = cx + (bx * cos - (s * by) * sin);
+    const b1y = cy + (bx * sin + (s * by) * cos);
+    ctx.beginPath();
+    ctx.moveTo(a1x, a1y);
+    ctx.lineTo(b1x, b1y);
+    ctx.stroke();
+  }
+
+  function start(e) {
+    e.preventDefault();
+    drawing = true;
+    last = pos(e);
+  }
+  function move(e) {
+    if (!drawing) return;
+    e.preventDefault();
+    const p = pos(e);
+    stamp(last, p);
+    last = p;
+  }
+  function end() { drawing = false; last = null; }
+
+  canvas.addEventListener('mousedown', start);
+  canvas.addEventListener('mousemove', move);
+  window.addEventListener('mouseup', end);
+  canvas.addEventListener('touchstart', start, { passive: false });
+  canvas.addEventListener('touchmove', move, { passive: false });
+  window.addEventListener('touchend', end);
+
+  // Optional slow fade for a "living" canvas
+  function tick() {
+    const f = parseFloat(fadeInput.value);
+    if (f > 0) {
+      ctx.fillStyle = `rgba(15, 16, 32, ${f / 1000})`;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+    requestAnimationFrame(tick);
+  }
+  tick();
+
+  el('clear').addEventListener('click', () => {
+    ctx.fillStyle = '#0f1020';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  });
+
+  el('save').addEventListener('click', () => {
+    const a = document.createElement('a');
+    a.download = 'mirror-doodle-' + Date.now() + '.png';
+    a.href = canvas.toDataURL('image/png');
+    a.click();
+  });
+})();
+</script>
+</body>
+</html>
